@@ -121,9 +121,15 @@ class PTYSession:
 
     def _read_chunk(self) -> bytes:
         if IS_WINDOWS:
+            # pywinpty 3.x read() has no non-blocking mode: it blocks on a
+            # socket recv until data arrives and raises EOFError at exit.
+            # Blocking here is fine - this runs on the session's pump thread
+            # and kill() closes the socket, which wakes it.
             try:
-                chunk = self._proc.read(READ_CHUNK, blocking=False)
-            except Exception:
+                chunk = self._proc.read(READ_CHUNK)
+            except EOFError:
+                return b""
+            except OSError:
                 return b""
             return chunk.encode("utf-8", "replace") if isinstance(chunk, str) else (chunk or b"")
         try:

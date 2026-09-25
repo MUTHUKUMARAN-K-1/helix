@@ -296,7 +296,7 @@ def test_terminal_session_roundtrip(tmp_path):
     sess = mgr.create()
     try:
         time.sleep(0.5)
-        sess.write(b"echo helix-$((6*7))\n")
+        sess.write(b"echo helix-42\r\n")  # plain echo: runs in cmd.exe and bash alike
         deadline = time.time() + 5
         q, snap = None, b""
         while time.time() < deadline:
@@ -329,7 +329,7 @@ def test_terminal_websocket(tmp_path):
     sess = client.post(f"/api/jobs/{jid}/terminal", json={}).json()
     assert sess["id"].startswith("term_") and sess["shell"]
     with client.websocket_connect(f"/api/terminal/{sess['id']}/ws") as ws:
-        ws.send_json({"type": "input", "data": "echo ws-$((3*4))\n"})
+        ws.send_json({"type": "input", "data": "echo ws-12\r\n"})  # plain echo: cmd.exe and bash alike
         out = ""
         deadline = time.time() + 5
         while time.time() < deadline and "ws-12" not in out:

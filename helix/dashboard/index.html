@@ -24,6 +24,7 @@
       </div>
     </div>
     <div class="stats">
+      <button class="board-toggle" id="btn-board" title="Jobs board - all runs at a glance">Board</button>
       <button class="theme-toggle" id="theme-toggle" title="Toggle dark mode">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
@@ -36,7 +37,7 @@
     </div>
   </header>
 
-  <main>
+  <main id="console-view">
     <aside>
       <div class="composer">
         <h2>New job</h2>
@@ -112,6 +113,26 @@
       </div>
     </section>
   </main>
+
+  <section class="board" id="board-view" style="display:none">
+    <div class="board-head">
+      <h2>Jobs board</h2>
+      <span class="board-sub" id="board-sub">every run at a glance - click a card to open its console</span>
+    </div>
+    <div class="board-grid" id="board-grid"></div>
+  </section>
+
+  <div class="diff-modal" id="diff-modal" style="display:none">
+    <div class="diff-modal-card">
+      <div class="diff-modal-head">
+        <span class="diff-modal-title" id="diff-modal-title"></span>
+        <span class="spacer"></span>
+        <button class="btn-commit" id="diff-modal-commit" style="display:none">Commit to branch</button>
+        <button class="diff-modal-close" id="diff-modal-close" title="Close">&times;</button>
+      </div>
+      <pre class="diff-modal-body" id="diff-modal-body"></pre>
+    </div>
+  </div>
 </div>
 <script src="/app.js"></script>
 </body>

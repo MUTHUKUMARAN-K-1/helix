@@ -85,9 +85,22 @@ class Store:
 
     def list_jobs(self, limit: int = 50) -> list[dict]:
         rows = self._conn.execute(
-            "SELECT id, goal, status, tokens_used, cost_usd, created_at, updated_at "
-            "FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
-        return [dict(r) for r in rows]
+            "SELECT j.id, j.goal, j.status, j.provider, j.tokens_used, j.cost_usd, "
+            "j.created_at, j.updated_at, j.workspace_path, j.workspace_branch, j.plan_json, "
+            "(SELECT count(*) FROM events e WHERE e.job_id=j.id AND e.type='node_completed') AS nodes_done "
+            "FROM jobs j ORDER BY j.created_at DESC LIMIT ?", (limit,)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            plan_json = d.pop("plan_json", None)
+            d["nodes_total"] = 0
+            if plan_json:
+                try:
+                    d["nodes_total"] = len(json.loads(plan_json).get("nodes", []))
+                except Exception:
+                    pass
+            out.append(d)
+        return out
 
     def emit(self, jid: str, type_: str, node_id: Optional[str], data: Any):
         with self._lock:

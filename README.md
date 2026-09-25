@@ -141,6 +141,14 @@ Exec and agent nodes run with the worktree as their working directory; the dashb
 
 <p align="center">
   <img src="docs/screenshot-changes.png" alt="Helix Changes tab - review a job's diff and commit it" width="85%">
+</p>
+
+### Jobs board
+
+Running several jobs at once? The dashboard's Board view (`?board=1` or the Board button in the header) shows every run as a live card: status, node progress, provider, tokens, cost, worktree branch and its diff stat. Open a card's console, review its changes in a modal, or commit its branch without leaving the board.
+
+<p align="center">
+  <img src="docs/screenshot-board.png" alt="Helix jobs board - every run at a glance" width="85%">
 </p> Non-git projects get a private workspace directory instead. Add `.helix/` to your global gitignore or let Helix mark it excluded automatically.
 
 ## Memory, playbooks, schedules

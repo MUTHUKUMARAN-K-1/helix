@@ -264,3 +264,25 @@ def test_exec_nodes_run_inside_worktree(tmp_path):
     assert not (base / "out.txt").exists(), "exec leaked into the base checkout"
     ws_path = Path(store.get_job(jid)["workspace_path"])
     assert (ws_path / "out.txt").read_text() == "made by helix"
+
+
+def test_list_jobs_board_fields(tmp_path):
+    """The jobs board reads progress, provider and worktree info from list_jobs."""
+    import json as _json
+    store = Store(str(tmp_path / "t.db"))
+    jid = store.create_job("board goal", "mock")
+    store.update_job(jid, plan_json=_json.dumps({"goal": "g", "nodes": [
+        {"id": "a", "kind": "research", "task": "t", "depends_on": []},
+        {"id": "b", "kind": "code", "task": "t", "depends_on": ["a"]},
+    ]}), workspace_path=str(tmp_path), workspace_branch="helix/" + jid)
+    store.emit(jid, "node_completed", "a", {})
+    row = [j for j in store.list_jobs(5) if j["id"] == jid][0]
+    assert row["provider"] == "mock"
+    assert row["nodes_total"] == 2
+    assert row["nodes_done"] == 1
+    assert row["workspace_branch"] == "helix/" + jid
+    assert row["workspace_path"] == str(tmp_path)
+    # jobs without a plan still report zeroed progress
+    j2 = store.create_job("plain", "mock")
+    row2 = [j for j in store.list_jobs(5) if j["id"] == j2][0]
+    assert row2["nodes_total"] == 0 and row2["nodes_done"] == 0

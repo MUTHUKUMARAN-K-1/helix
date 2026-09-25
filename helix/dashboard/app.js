@@ -192,12 +192,12 @@
   function renderDiff(text) {
     if (!text || !text.trim()) return '<span class="placeholder">Workspace clean - no changes.</span>';
     return text.split("\n").map(l => {
-      let cls = "";
+      let cls = "dl-ctx";
       if (l.startsWith("+++") || l.startsWith("---") || l.startsWith("diff --git")) cls = "dl-file";
       else if (l.startsWith("@@")) cls = "dl-hunk";
       else if (l.startsWith("+")) cls = "dl-add";
       else if (l.startsWith("-")) cls = "dl-del";
-      return cls ? `<span class="${cls}">${esc(l)}</span>` : esc(l) + "\n";
+      return `<span class="${cls}">${esc(l)}</span>`;
     }).join("");
   }
 
@@ -367,8 +367,114 @@
     draw();
   };
 
+  /* ---- Jobs board: every run at a glance ---- */
+  const board = { visible: false, timer: null, modalJob: null };
+
+  function fmtAge(ts) {
+    const s = Math.max(0, Date.now() / 1000 - ts);
+    if (s < 60) return Math.floor(s) + "s ago";
+    if (s < 3600) return Math.floor(s / 60) + "m ago";
+    if (s < 86400) return Math.floor(s / 3600) + "h ago";
+    return Math.floor(s / 86400) + "d ago";
+  }
+
+  function showBoard(on) {
+    board.visible = on;
+    $("board-view").style.display = on ? "" : "none";
+    $("console-view").style.display = on ? "none" : "";
+    $("btn-board").textContent = on ? "Console" : "Board";
+    $("btn-board").classList.toggle("on", on);
+    clearInterval(board.timer); board.timer = null;
+    if (on) { refreshBoard(); board.timer = setInterval(refreshBoard, 4000); }
+  }
+  $("btn-board").onclick = () => showBoard(!board.visible);
+
+  async function refreshBoard() {
+    let jobs;
+    try { ({ jobs } = await api("/api/jobs?limit=48")); } catch (e) { return; }
+    const grid = $("board-grid");
+    grid.innerHTML = "";
+    if (!jobs.length) {
+      grid.innerHTML = '<div class="bcard-empty">No jobs yet - launch one from the console.</div>';
+      return;
+    }
+    for (const j of jobs) grid.appendChild(boardCard(j));
+    // diff stats for worktree jobs, lazily (cheap --stat only)
+    for (const j of jobs) {
+      if (!j.workspace_path) continue;
+      api(`/api/jobs/${j.id}/diff?stat=1`).then(d => {
+        const el = document.getElementById("stat-" + j.id);
+        if (!el) return;
+        const lines = (d.diff || "").trim().split("\n").filter(Boolean);
+        const summary = lines.length ? lines[lines.length - 1] : "";
+        el.textContent = summary && /file|insertion|deletion/.test(summary) ? summary : "workspace clean";
+      }).catch(() => {});
+    }
+  }
+
+  function boardCard(j) {
+    const el = document.createElement("div");
+    el.className = "bcard";
+    const pct = j.nodes_total ? Math.round(100 * (j.nodes_done || 0) / j.nodes_total) : 0;
+    el.innerHTML = `
+      <div class="bcard-top">
+        <span class="pill ${j.status}">${j.status.replace("_", " ")}</span>
+        <span class="bcard-meta">${fmtAge(j.created_at)}</span>
+      </div>
+      <div class="bcard-goal"></div>
+      ${j.nodes_total ? `<div class="bcard-progress" title="${j.nodes_done || 0} of ${j.nodes_total} nodes done"><div style="width:${pct}%"></div></div>` : ""}
+      <div class="bcard-meta">
+        <span>${j.provider || ""}</span>
+        <span>${j.nodes_total ? (j.nodes_done || 0) + "/" + j.nodes_total + " nodes" : "no plan yet"}</span>
+        <span>${fmtNum(j.tokens_used || 0)} tok</span>
+        <span>$${(j.cost_usd || 0).toFixed(2)}</span>
+      </div>
+      ${j.workspace_branch ? `<div class="bcard-branch" title="${j.workspace_branch}">&#9095; ${j.workspace_branch}</div><div class="bcard-stat" id="stat-${j.id}"></div>` : ""}
+      <div class="bcard-actions">
+        <button class="b-open">Open</button>
+        ${j.workspace_path ? '<button class="b-diff">Changes</button>' : ""}
+      </div>`;
+    el.querySelector(".bcard-goal").textContent = j.goal;
+    el.onclick = () => { showBoard(false); selectJob(j.id); };
+    const diffBtn = el.querySelector(".b-diff");
+    if (diffBtn) diffBtn.onclick = (e) => { e.stopPropagation(); openDiffModal(j); };
+    return el;
+  }
+
+  async function openDiffModal(j) {
+    board.modalJob = j;
+    $("diff-modal-title").textContent = j.goal.slice(0, 90) + " - " + (j.workspace_branch || "");
+    $("diff-modal-body").innerHTML = '<span class="placeholder">loading diff...</span>';
+    $("diff-modal-commit").style.display = "none";
+    $("diff-modal").style.display = "";
+    try {
+      const d = await api(`/api/jobs/${j.id}/diff`);
+      $("diff-modal-body").innerHTML = renderDiff(d.diff);
+      $("diff-modal-commit").style.display = (d.diff && d.diff.trim()) ? "" : "none";
+    } catch (e) {
+      $("diff-modal-body").textContent = "no diff available: " + e.message;
+    }
+  }
+  function closeDiffModal() { $("diff-modal").style.display = "none"; board.modalJob = null; }
+  $("diff-modal-close").onclick = closeDiffModal;
+  $("diff-modal").onclick = (e) => { if (e.target === $("diff-modal")) closeDiffModal(); };
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && board.modalJob) closeDiffModal(); });
+  $("diff-modal-commit").onclick = async () => {
+    if (!board.modalJob) return;
+    $("diff-modal-commit").disabled = true;
+    try {
+      const r = await api(`/api/jobs/${board.modalJob.id}/commit`, { body: {} });
+      $("diff-modal-body").innerHTML = `<span class="placeholder">Committed ${r.rev.slice(0,10)} on ${r.branch}. Merge with: git merge ${r.branch}</span>`;
+      $("diff-modal-commit").style.display = "none";
+      refreshBoard();
+    } catch (e) { alert("commit failed: " + e.message); }
+    finally { $("diff-modal-commit").disabled = false; }
+  };
+
   refreshStats(); refreshJobs(); tick();
-  const wanted = new URLSearchParams(location.search).get("job");
-  if (wanted) selectJob(wanted);
+  const params = new URLSearchParams(location.search);
+  if (params.get("board") === "1") showBoard(true);
+  const wanted = params.get("job");
+  if (wanted) { showBoard(false); selectJob(wanted); }
   setInterval(() => { refreshStats(); refreshJobs(); }, 8000);
 })();

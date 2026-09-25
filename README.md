@@ -137,7 +137,11 @@ helix commit <job_id>        # commit to the helix/<job_id> branch
 git merge helix/<job_id>     # your call, your merge
 ```
 
-Exec and agent nodes run with the worktree as their working directory; the dashboard's Changes tab renders the diff with a Commit button. Non-git projects get a private workspace directory instead. Add `.helix/` to your global gitignore or let Helix mark it excluded automatically.
+Exec and agent nodes run with the worktree as their working directory; the dashboard's Changes tab renders the diff with a Commit button.
+
+<p align="center">
+  <img src="docs/screenshot-changes.png" alt="Helix Changes tab - review a job's diff and commit it" width="85%">
+</p> Non-git projects get a private workspace directory instead. Add `.helix/` to your global gitignore or let Helix mark it excluded automatically.
 
 ## Memory, playbooks, schedules
 

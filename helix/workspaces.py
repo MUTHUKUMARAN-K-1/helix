@@ -89,7 +89,10 @@ class WorkspaceManager:
         if not ws.is_git:
             raise WorkspaceError("workspace is not a git worktree; nothing to commit")
         _git(["add", "-A"], cwd=str(ws.path))
-        res = _git(["commit", "-m", message], cwd=str(ws.path))
+        # CI and fresh machines often have no git identity; fall back only then
+        ident = [] if _git(["config", "user.email"], cwd=str(ws.path)).stdout.strip() \
+            else ["-c", "user.name=Helix", "-c", "user.email=helix@localhost"]
+        res = _git([*ident, "commit", "-m", message], cwd=str(ws.path))
         if res.returncode != 0 and "nothing to commit" not in (res.stdout + res.stderr):
             raise WorkspaceError(f"git commit failed: {res.stderr.strip()}")
         rev = _git(["rev-parse", "HEAD"], cwd=str(ws.path))

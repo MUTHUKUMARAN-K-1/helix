@@ -1,0 +1,205 @@
+"""Helix SaaS API + dashboard server.
+
+Endpoints:
+  POST /api/jobs                 {goal, provider?, budget?, plan?} -> {id}
+  GET  /api/jobs                 recent jobs
+  GET  /api/jobs/{id}            job + plan + metrics
+  GET  /api/jobs/{id}/events     event log (?since=seq)
+  GET  /api/jobs/{id}/stream     SSE stream of events
+  POST /api/jobs/{id}/approve    {node_id, approved, note?}
+  GET  /api/stats                fleet-level totals
+  GET  /.well-known/agent.json   A2A-style agent card
+  POST /a2a                      A2A-style task submit (alias of /api/jobs)
+  GET  /                         dashboard
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+from typing import Optional
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from pydantic import BaseModel
+
+from . import __version__
+from pathlib import Path
+from .executor import JobRunner, approve_job
+from .providers import PROVIDERS
+from .schema import plan_metrics, validate_plan, PlanError
+from .store import Store
+
+DASHBOARD_DIR = os.path.join(os.path.dirname(__file__), "dashboard")
+
+
+class JobIn(BaseModel):
+    goal: str
+    provider: Optional[str] = None
+    budget: int = 60000
+    plan: Optional[dict] = None
+
+
+class ApprovalIn(BaseModel):
+    node_id: str
+    approved: bool
+    note: str = ""
+
+
+def create_app(db_path: Optional[str] = None, provider: str = "mock") -> FastAPI:
+    app = FastAPI(title="Helix", version=__version__)
+    store = Store(db_path) if db_path else Store()
+    app.state.store = store
+    app.state.default_provider = provider
+
+    def get_job_or_404(jid: str) -> dict:
+        job = store.get_job(jid)
+        if not job:
+            raise HTTPException(404, f"no job {jid}")
+        return job
+
+    def submit_job(body: JobIn) -> dict:
+        prov = body.provider or app.state.default_provider
+        if prov not in PROVIDERS:
+            raise HTTPException(400, f"unknown provider {prov!r}")
+        jid = store.create_job(body.goal, prov)
+        if body.plan is not None:
+            try:
+                plan = validate_plan(body.plan)
+            except PlanError as e:
+                raise HTTPException(422, {"errors": e.errors})
+            store.update_job(jid, plan_json=json.dumps(plan.model_dump()))
+        mem_root = str(Path(db_path).parent / "memory") if db_path else None
+        runner = JobRunner(store, prov, token_budget=body.budget,
+                           memory_root=mem_root)
+        asyncio.create_task(runner.run(jid))
+        return {"id": jid, "status": "queued"}
+
+    @app.post("/api/jobs", status_code=201)
+    async def submit(body: JobIn):
+        return submit_job(body)
+
+    @app.post("/a2a", status_code=201)
+    async def a2a_submit(body: JobIn):
+        """A2A-style task submission: same payload, peer-friendly path."""
+        return submit_job(body)
+
+    @app.get("/.well-known/agent.json")
+    async def agent_card():
+        return {
+            "name": "Helix",
+            "version": __version__,
+            "description": "Lean DAG orchestration engine: typed plans, parallel execution, verification, approval gates, cost control.",
+            "capabilities": {"streaming": True, "approvals": True, "workers": ["claude-code", "codex", "custom", "http"]},
+            "endpoints": {"submit": "/a2a", "status": "/api/jobs/{id}", "events": "/api/jobs/{id}/events", "stream": "/api/jobs/{id}/stream"},
+            "providers": sorted(PROVIDERS),
+        }
+
+    def playbook_store():
+        from .playbooks import PlaybookStore
+        root = Path(db_path).parent / "playbooks" if db_path else Path("playbooks")
+        return PlaybookStore(root)
+
+    @app.get("/api/playbooks")
+    async def list_playbooks():
+        return {"playbooks": playbook_store().list()}
+
+    @app.post("/api/playbooks/{name}/run", status_code=201)
+    async def run_playbook(name: str, body: JobIn):
+        try:
+            plan = playbook_store().get(name)
+        except Exception as e:
+            raise HTTPException(404, str(e))
+        return submit_job(JobIn(goal=plan.goal, provider=body.provider,
+                                budget=body.budget, plan=plan.model_dump()))
+
+    @app.post("/api/hooks/{token}", status_code=201)
+    async def fire_webhook(token: str):
+        from .scheduler import WebhookStore
+        root = Path(db_path).parent if db_path else Path(".")
+        hook = WebhookStore(root).by_token(token)
+        if not hook:
+            raise HTTPException(404, "unknown or disabled webhook")
+        body = JobIn(goal=hook.goal or f"webhook:{hook.name}",
+                     provider=hook.provider, budget=hook.budget)
+        if hook.playbook:
+            try:
+                plan = playbook_store().get(hook.playbook)
+            except Exception as e:
+                raise HTTPException(404, str(e))
+            body.plan = plan.model_dump()
+        return submit_job(body)
+
+    @app.get("/api/jobs")
+    async def list_jobs(limit: int = 50):
+        return {"jobs": store.list_jobs(limit)}
+
+    @app.get("/api/jobs/{jid}")
+    async def job_detail(jid: str):
+        job = get_job_or_404(jid)
+        if job.get("plan"):
+            try:
+                job["metrics"] = plan_metrics(validate_plan(job["plan"]))
+            except Exception:
+                job["metrics"] = None
+        return job
+
+    @app.get("/api/jobs/{jid}/events")
+    async def job_events(jid: str, since: int = 0):
+        get_job_or_404(jid)
+        return {"events": store.events_since(jid, seq=since)}
+
+    @app.get("/api/jobs/{jid}/stream")
+    async def job_stream(jid: str, since: int = 0):
+        get_job_or_404(jid)
+
+        async def gen():
+            seq = since
+            idle = 0
+            while True:
+                events = store.events_since(jid, seq=seq)
+                for ev in events:
+                    seq = ev["seq"]
+                    yield f"id: {ev['seq']}\nevent: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
+                job = store.get_job(jid)
+                if job and job["status"] in ("completed", "failed", "budget_exceeded") and not events:
+                    yield f"event: done\ndata: {json.dumps({'status': job['status']})}\n\n"
+                    return
+                idle = 0 if events else idle + 1
+                if idle % 20 == 0:
+                    yield ": keepalive\n\n"
+                await asyncio.sleep(0.5)
+
+        return StreamingResponse(gen(), media_type="text/event-stream")
+
+    @app.post("/api/jobs/{jid}/approve")
+    async def approve(jid: str, body: ApprovalIn):
+        get_job_or_404(jid)
+        approve_job(store, jid, body.node_id, body.approved, body.note)
+        return {"ok": True}
+
+    @app.get("/api/stats")
+    async def stats():
+        jobs = store.list_jobs(500)
+        done = [j for j in jobs if j["status"] == "completed"]
+        return {
+            "jobs_total": len(jobs),
+            "jobs_completed": len(done),
+            "tokens_total": sum(j["tokens_used"] or 0 for j in jobs),
+            "cost_total_usd": round(sum(j["cost_usd"] or 0 for j in jobs), 6),
+            "providers": sorted(PROVIDERS),
+        }
+
+    @app.get("/")
+    async def index():
+        return FileResponse(os.path.join(DASHBOARD_DIR, "index.html"))
+
+    @app.get("/{path:path}")
+    async def static_files(path: str):
+        safe = os.path.normpath(path).lstrip("/")
+        full = os.path.join(DASHBOARD_DIR, safe)
+        if not full.startswith(os.path.abspath(DASHBOARD_DIR)) or not os.path.isfile(full):
+            raise HTTPException(404)
+        return FileResponse(full)
+
+    return app

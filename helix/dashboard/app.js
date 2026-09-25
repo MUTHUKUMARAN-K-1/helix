@@ -1,0 +1,326 @@
+/* Helix dashboard: live DAG canvas, SSE event stream, approvals, results. */
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const state = { jobId: null, plan: null, nodeState: {}, es: null, seq: 0, pendingApproval: null, pollTimer: null };
+
+  const PALETTES = {
+    light: {
+      queued:  { stroke: "rgba(15,23,42,0.25)", fill: "#ffffff", text: "#64748b" },
+      running: { stroke: "#0284c7", fill: "rgba(2,132,199,0.07)", text: "#0284c7" },
+      waiting: { stroke: "#d97706", fill: "rgba(217,119,6,0.07)", text: "#d97706" },
+      verified:{ stroke: "#0d9488", fill: "rgba(13,148,136,0.07)", text: "#0d9488" },
+      done:    { stroke: "#059669", fill: "rgba(5,150,105,0.08)", text: "#059669" },
+      failed:  { stroke: "#dc2626", fill: "rgba(220,38,38,0.06)", text: "#dc2626" },
+      edge: "rgba(15,23,42,0.18)", edgeActive: "rgba(5,150,105,0.6)", nodeText: "#1e293b",
+    },
+    dark: {
+      queued:  { stroke: "rgba(255,255,255,0.22)", fill: "rgba(255,255,255,0.04)", text: "#8b95a7" },
+      running: { stroke: "#38bdf8", fill: "rgba(56,189,248,0.10)", text: "#38bdf8" },
+      waiting: { stroke: "#fbbf24", fill: "rgba(251,191,36,0.10)", text: "#fbbf24" },
+      verified:{ stroke: "#5eead4", fill: "rgba(94,234,212,0.10)", text: "#5eead4" },
+      done:    { stroke: "#34d399", fill: "rgba(52,211,153,0.12)", text: "#34d399" },
+      failed:  { stroke: "#f87171", fill: "rgba(248,113,113,0.10)", text: "#f87171" },
+      edge: "rgba(255,255,255,0.13)", edgeActive: "rgba(52,211,153,0.55)", nodeText: "#dbe3ee",
+    },
+  };
+  const theme = () => document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+  const COLORS = new Proxy({}, { get: (_, k) => PALETTES[theme()][k] });
+  const NODE_W = 176, NODE_H = 58, PAD_X = 90, PAD_Y = 46;
+
+  async function api(path, opts) {
+    const r = await fetch(path, opts && { method: opts.method || "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(opts.body || {}) });
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    return r.json();
+  }
+
+  async function refreshStats() {
+    try {
+      const s = await api("/api/stats");
+      $("st-jobs").textContent = s.jobs_total;
+      $("st-done").textContent = s.jobs_completed;
+      $("st-tokens").textContent = fmtNum(s.tokens_total);
+      $("st-cost").textContent = "$" + s.cost_total_usd.toFixed(2);
+    } catch (e) {}
+  }
+
+  async function refreshJobs() {
+    try {
+      const { jobs } = await api("/api/jobs?limit=30");
+      const box = $("jobs");
+      box.innerHTML = "";
+      for (const j of jobs) {
+        const el = document.createElement("div");
+        el.className = "job-card" + (j.id === state.jobId ? " active" : "");
+        el.innerHTML = `<div class="goal"></div>
+          <div class="meta"><span class="pill ${j.status}">${j.status.replace("_", " ")}</span>
+          <span>${fmtNum(j.tokens_used || 0)} tok</span><span>$${(j.cost_usd || 0).toFixed(2)}</span></div>`;
+        el.querySelector(".goal").textContent = j.goal;
+        el.onclick = () => selectJob(j.id);
+        box.appendChild(el);
+      }
+    } catch (e) {}
+  }
+
+  function fmtNum(n) {
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + "k";
+    return String(n);
+  }
+
+  async function selectJob(jid) {
+    if (state.es) state.es.close();
+    state.jobId = jid; state.seq = 0; state.nodeState = {}; state.plan = null; state.pendingApproval = null;
+    $("events").innerHTML = "";
+    $("result").innerHTML = '<span class="placeholder">The final synthesis lands here when the job completes.</span>';
+    $("approval-banner").classList.remove("show");
+    const job = await api(`/api/jobs/${jid}`);
+    $("stage-title").textContent = job.goal;
+    $("stage-jobid").textContent = job.id;
+    setStatusPill(job.status);
+    if (job.plan) { state.plan = job.plan; for (const n of job.plan.nodes) state.nodeState[n.id] = "queued"; }
+    if (job.result) showResult(job.result);
+    $("empty-stage").style.display = "none";
+    draw();
+    refreshJobs();
+    const { events } = await api(`/api/jobs/${jid}/events?since=0`);
+    for (const ev of events) { handleEvent(ev, true); state.seq = Math.max(state.seq, ev.seq); }
+    $("events").scrollTop = $("events").scrollHeight;
+    if (!["completed", "failed", "budget_exceeded"].includes(job.status)) openStream(jid);
+    refreshApprovals(events);
+  }
+
+  function openStream(jid) {
+    $("live-dot").classList.remove("off");
+    const es = new EventSource(`/api/jobs/${jid}/stream?since=${state.seq}`);
+    state.es = es;
+    es.onmessage = (m) => { const ev = JSON.parse(m.data); handleEvent(ev); state.seq = Math.max(state.seq, ev.seq); };
+    es.addEventListener("done", () => { es.close(); $("live-dot").classList.add("off"); finalRefresh(); });
+    es.onerror = () => { es.close(); $("live-dot").classList.add("off"); pollFallback(); };
+  }
+
+  function pollFallback() {
+    clearTimeout(state.pollTimer);
+    state.pollTimer = setTimeout(async () => {
+      if (!state.jobId) return;
+      const { events } = await api(`/api/jobs/${state.jobId}/events?since=${state.seq}`);
+      for (const ev of events) { handleEvent(ev); state.seq = Math.max(state.seq, ev.seq); }
+      const job = await api(`/api/jobs/${state.jobId}`);
+      setStatusPill(job.status);
+      if (job.result) showResult(job.result);
+      refreshApprovals(events);
+      if (!["completed", "failed", "budget_exceeded"].includes(job.status)) pollFallback();
+      else finalRefresh();
+    }, 1500);
+  }
+
+  function finalRefresh() {
+    refreshJobs(); refreshStats();
+    if (state.jobId) api(`/api/jobs/${state.jobId}`).then(j => { if (j.result) showResult(j.result); setStatusPill(j.status); });
+  }
+
+  function handleEvent(ev, replay = false) {
+    const t = ev.type, n = ev.node_id;
+    if (t === "plan_ready") {
+      state.plan = ev.data.plan;
+      for (const nd of ev.data.plan.nodes) state.nodeState[nd.id] = "queued";
+      setStatusPill("running");
+    }
+    if (t === "node_started" || t === "node_retry") state.nodeState[n] = "running";
+    if (t === "node_verified" && ev.data.pass) state.nodeState[n] = "verified";
+    if (t === "node_completed") state.nodeState[n] = "done";
+    if (t === "approval_requested") { state.nodeState[n] = "waiting"; if (!replay) showApproval(ev); }
+    if (t === "approval_resolved") { if (state.nodeState[n] === "waiting") state.nodeState[n] = "running"; hideApproval(); }
+    if (t === "job_completed") { setStatusPill("completed"); finalRefresh(); }
+    if (t === "job_failed") { setStatusPill(ev.data && ev.data.status || "failed"); finalRefresh(); }
+    appendEvent(ev, replay);
+    draw();
+  }
+
+  function appendEvent(ev, replay = false) {
+    const box = $("events");
+    const el = document.createElement("div");
+    el.className = "ev";
+    if (replay) el.style.opacity = "1";
+    const detail = ev.data && ev.data.reason ? ev.data.reason
+      : ev.data && ev.data.model ? `${ev.data.model} · ${ev.data.tokens} tok · ${ev.data.latency_ms}ms`
+      : ev.data && ev.data.note ? ev.data.note : "";
+    el.innerHTML = `<span class="seq">${ev.seq}</span><span class="type t-${ev.type}">${ev.type}</span><span class="node">${ev.node_id || ""}</span><span class="detail"></span>`;
+    el.querySelector(".detail").textContent = detail;
+    box.appendChild(el);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function refreshApprovals(events) {
+    const pending = {};
+    for (const ev of events || []) {
+      if (ev.type === "approval_requested") pending[ev.node_id + ev.seq] = ev;
+      if (ev.type === "approval_resolved") {
+        for (const k of Object.keys(pending)) if (pending[k].node_id === ev.node_id) delete pending[k];
+      }
+    }
+    const left = Object.values(pending);
+    if (left.length) showApproval(left[left.length - 1]); else hideApproval();
+  }
+
+  function showApproval(ev) {
+    state.pendingApproval = ev;
+    $("approval-text").innerHTML = `<b>${ev.node_id}</b> is holding at a human gate (${ev.data && ev.data.stage || "review"}). Approve to continue the job.`;
+    $("approval-banner").classList.add("show");
+  }
+  function hideApproval() { state.pendingApproval = null; $("approval-banner").classList.remove("show"); }
+
+  async function resolveApproval(approved) {
+    if (!state.pendingApproval) return;
+    await api(`/api/jobs/${state.jobId}/approve`, { body: { node_id: state.pendingApproval.node_id, approved, note: approved ? "approved from dashboard" : "rejected from dashboard" } });
+    hideApproval();
+  }
+  $("btn-approve").onclick = () => resolveApproval(true);
+  $("btn-reject").onclick = () => resolveApproval(false);
+
+  function setStatusPill(status) {
+    const p = $("stage-status");
+    p.style.display = "";
+    p.className = "pill " + status;
+    p.textContent = status.replace("_", " ");
+  }
+
+  function showResult(text) { const r = $("result"); r.textContent = text; r.classList.add("result-view"); }
+
+  const canvas = $("dag");
+  const ctx = canvas.getContext("2d");
+  let pulse = 0;
+
+  function layout(plan, W, H) {
+    const nodes = plan.nodes;
+    const depth = {};
+    const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
+    const get = (id) => {
+      if (depth[id] !== undefined) return depth[id];
+      const n = byId[id];
+      depth[id] = n.depends_on.length ? 1 + Math.max(...n.depends_on.map(get)) : 0;
+      return depth[id];
+    };
+    nodes.forEach(n => get(n.id));
+    const levels = {};
+    nodes.forEach(n => { const d = depth[n.id]; (levels[d] = levels[d] || []).push(n); });
+    const ds = Object.keys(levels).map(Number).sort((a, b) => a - b);
+    const pos = {};
+    const levelH = ds.length > 1 ? (H - PAD_Y * 2 - NODE_H) / (ds.length - 1) : 0;
+    ds.forEach((d, i) => {
+      const row = levels[d];
+      const rowW = row.length * NODE_W + (row.length - 1) * 40;
+      row.forEach((n, j) => { pos[n.id] = { x: (W - rowW) / 2 + j * (NODE_W + 40), y: ds.length > 1 ? PAD_Y + i * levelH : (H - NODE_H) / 2 }; });
+    });
+    return pos;
+  }
+
+  function rr(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function draw() {
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    if (!W || !H) return;
+    if (canvas.width !== W * dpr) { canvas.width = W * dpr; canvas.height = H * dpr; }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    if (!state.plan) return;
+    const pos = layout(state.plan, W, H);
+
+    for (const n of state.plan.nodes) {
+      for (const d of n.depends_on) {
+        const a = pos[d], b = pos[n.id];
+        const x1 = a.x + NODE_W / 2, y1 = a.y + NODE_H;
+        const x2 = b.x + NODE_W / 2, y2 = b.y;
+        const active = state.nodeState[d] === "done" || state.nodeState[d] === "verified";
+        ctx.strokeStyle = active ? PALETTES[theme()].edgeActive : PALETTES[theme()].edge;
+        ctx.lineWidth = active ? 1.8 : 1.2;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.bezierCurveTo(x1, y1 + (y2 - y1) / 2, x2, y2 - (y2 - y1) / 2, x2, y2 - 8);
+        ctx.stroke();
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.beginPath();
+        ctx.moveTo(x2, y2 - 2); ctx.lineTo(x2 - 5, y2 - 10); ctx.lineTo(x2 + 5, y2 - 10);
+        ctx.closePath(); ctx.fill();
+      }
+    }
+
+    for (const n of state.plan.nodes) {
+      const p = pos[n.id];
+      const st = state.nodeState[n.id] || "queued";
+      const c = COLORS[st];
+      if (st === "running" || st === "waiting") {
+        const g = 0.5 + 0.5 * Math.sin(pulse / 14);
+        ctx.shadowColor = c.stroke; ctx.shadowBlur = 12 + 14 * g;
+      }
+      rr(p.x, p.y, NODE_W, NODE_H, 13);
+      ctx.fillStyle = c.fill; ctx.fill();
+      ctx.strokeStyle = c.stroke; ctx.lineWidth = 1.6; ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.font = "600 8.5px Inter, sans-serif";
+      ctx.fillStyle = c.text;
+      ctx.globalAlpha = 0.85;
+      ctx.fillText((n.kind + (n.approval ? " · gate" : "")).toUpperCase(), p.x + 13, p.y + 17);
+      ctx.globalAlpha = 1;
+      ctx.font = "11.5px Inter, sans-serif";
+      ctx.fillStyle = PALETTES[theme()].nodeText;
+      wrapText(n.task, p.x + 13, p.y + 33, NODE_W - 26, 14, 2);
+      ctx.beginPath();
+      ctx.arc(p.x + NODE_W - 14, p.y + 14, 4, 0, Math.PI * 2);
+      ctx.fillStyle = c.stroke;
+      ctx.fill();
+    }
+  }
+
+  function wrapText(text, x, y, maxW, lh, maxLines) {
+    const words = String(text).split(" ");
+    let line = "", lines = 0;
+    for (let i = 0; i < words.length; i++) {
+      const test = line ? line + " " + words[i] : words[i];
+      if (ctx.measureText(test).width > maxW && line) {
+        if (++lines >= maxLines) { ctx.fillText(line.replace(/\s\S*$/, "") + "…", x, y); return; }
+        ctx.fillText(line, x, y);
+        line = words[i]; y += lh;
+      } else line = test;
+    }
+    if (line && lines < maxLines) ctx.fillText(line, x, y);
+  }
+
+  function tick() { pulse++; if (Object.values(state.nodeState).some(s => s === "running" || s === "waiting")) draw(); requestAnimationFrame(tick); }
+  window.addEventListener("resize", draw);
+
+  $("launch").onclick = async () => {
+    const goal = $("goal").value.trim();
+    if (!goal) return;
+    $("launch").disabled = true;
+    try {
+      const { id } = await api("/api/jobs", { body: { goal, provider: $("provider").value, budget: +$("budget").value || 60000 } });
+      $("goal").value = "";
+      await refreshJobs();
+      selectJob(id);
+    } catch (e) { alert("launch failed: " + e.message); }
+    finally { $("launch").disabled = false; }
+  };
+  $("goal").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("launch").click(); });
+
+  document.documentElement.dataset.theme = localStorage.getItem("helix-theme") || "light";
+  $("theme-toggle").onclick = () => {
+    const next = theme() === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem("helix-theme", next);
+    draw();
+  };
+
+  refreshStats(); refreshJobs(); tick();
+  const wanted = new URLSearchParams(location.search).get("job");
+  if (wanted) selectJob(wanted);
+  setInterval(() => { refreshStats(); refreshJobs(); }, 8000);
+})();

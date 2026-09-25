@@ -1,0 +1,9 @@
+{
+  "goal": "Produce a weekly digest for a topic or project",
+  "token_budget": 50000,
+  "nodes": [
+    {"id": "gather", "kind": "research", "task": "Collect this week's notable items for the topic", "depends_on": [], "model_tier": "cheap"},
+    {"id": "rank", "kind": "analysis", "task": "Rank items by importance and group them by theme", "depends_on": ["gather"], "model_tier": "cheap"},
+    {"id": "digest", "kind": "synthesis", "task": "Write the digest: highlights first, then grouped items, then what to watch next week", "depends_on": ["rank"], "model_tier": "strong"}
+  ]
+}

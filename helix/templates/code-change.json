@@ -1,0 +1,10 @@
+{
+  "goal": "Implement a described code change safely",
+  "token_budget": 80000,
+  "nodes": [
+    {"id": "understand", "kind": "analysis", "task": "Read the relevant code and restate the change precisely", "depends_on": [], "model_tier": "cheap"},
+    {"id": "implement", "kind": "code", "task": "Write the implementation", "depends_on": ["understand"], "model_tier": "strong"},
+    {"id": "review", "kind": "analysis", "task": "Review the implementation for bugs, edge cases and style", "depends_on": ["implement"], "model_tier": "cheap"},
+    {"id": "final", "kind": "synthesis", "task": "Produce the final patch plus explanation, applying review feedback", "depends_on": ["review"], "approval": true, "model_tier": "strong"}
+  ]
+}

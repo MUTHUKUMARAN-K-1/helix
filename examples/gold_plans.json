@@ -1,0 +1,26 @@
+[
+  {
+    "goal": "Research competitors and draft a launch plan",
+    "plan": {
+      "goal": "Research competitors and draft a launch plan",
+      "nodes": [
+        {"id": "research", "kind": "research", "task": "Research competitors and their pricing", "depends_on": []},
+        {"id": "positioning", "kind": "analysis", "task": "Analyze positioning gaps from the research", "depends_on": ["research"]},
+        {"id": "channels", "kind": "analysis", "task": "Pick launch channels from the research", "depends_on": ["research"]},
+        {"id": "plan", "kind": "synthesis", "task": "Draft the final launch plan", "depends_on": ["positioning", "channels"]}
+      ]
+    }
+  },
+  {
+    "goal": "Build a landing page for a SaaS product",
+    "plan": {
+      "goal": "Build a landing page for a SaaS product",
+      "nodes": [
+        {"id": "copy", "kind": "research", "task": "Write the page copy and headline options", "depends_on": []},
+        {"id": "design", "kind": "design", "task": "Design the layout and visual style", "depends_on": []},
+        {"id": "build", "kind": "code", "task": "Implement the page in HTML and CSS", "depends_on": ["copy", "design"]},
+        {"id": "review", "kind": "verify", "task": "Review the page against the brief", "depends_on": ["build"]}
+      ]
+    }
+  }
+]

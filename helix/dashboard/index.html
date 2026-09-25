@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Helix - Agent Orchestration</title>
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M10 4c8 4 8 8 0 12s-8 8 0 12' stroke='%230d9488' stroke-width='3' fill='none' stroke-linecap='round'/><path d='M22 4c-8 4-8 8 0 12s8 8 0 12' stroke='%237c3aed' stroke-width='3' fill='none' stroke-linecap='round'/></svg>">
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <svg width="30" height="30" viewBox="0 0 32 32" fill="none">
+        <path d="M10 4c8 4 8 8 0 12s-8 8 0 12" stroke="#0d9488" stroke-width="2.6" stroke-linecap="round"/>
+        <path d="M22 4c-8 4-8 8 0 12s8 8 0 12" stroke="#7c3aed" stroke-width="2.6" stroke-linecap="round"/>
+        <line x1="12" y1="9" x2="20" y2="9" stroke="#0284c7" stroke-width="1.6" stroke-linecap="round" opacity="0.8"/>
+        <line x1="10.5" y1="16" x2="21.5" y2="16" stroke="#0284c7" stroke-width="1.6" stroke-linecap="round" opacity="0.8"/>
+        <line x1="12" y1="23" x2="20" y2="23" stroke="#0284c7" stroke-width="1.6" stroke-linecap="round" opacity="0.8"/>
+      </svg>
+      <div>
+        <div class="brand-name">HELIX</div>
+        <div class="brand-sub">agent orchestration engine</div>
+      </div>
+    </div>
+    <div class="stats">
+      <button class="theme-toggle" id="theme-toggle" title="Toggle dark mode">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+        </svg>
+      </button>
+      <div class="stat-chip"><span class="v" id="st-jobs">0</span><span class="k">jobs</span></div>
+      <div class="stat-chip"><span class="v" id="st-done">0</span><span class="k">completed</span></div>
+      <div class="stat-chip"><span class="v" id="st-tokens">0</span><span class="k">tokens</span></div>
+      <div class="stat-chip"><span class="v" id="st-cost">$0.00</span><span class="k">cost</span></div>
+    </div>
+  </header>
+
+  <main>
+    <aside>
+      <div class="composer">
+        <h2>New job</h2>
+        <textarea id="goal" placeholder="Describe the long job. Helix plans the DAG, runs the nodes in parallel, verifies each output and holds at your approval gates."></textarea>
+        <div class="composer-row">
+          <select id="provider">
+            <optgroup label="Free / demo">
+              <option value="mock" selected>mock - offline, $0, no key</option>
+              <option value="gemini">gemini - free tier</option>
+              <option value="groq">groq - free tier</option>
+              <option value="openrouter">openrouter - free models</option>
+              <option value="cerebras">cerebras - free tier</option>
+              <option value="ollama">ollama - local models</option>
+            </optgroup>
+            <optgroup label="Paid">
+              <option value="openai">openai</option>
+              <option value="anthropic">anthropic</option>
+              <option value="deepseek">deepseek</option>
+              <option value="mistral">mistral</option>
+              <option value="together">together</option>
+              <option value="custom">custom endpoint</option>
+            </optgroup>
+          </select>
+          <input type="number" id="budget" value="60000" min="1000" step="1000" title="token budget">
+        </div>
+        <button class="btn-launch" id="launch">Launch job</button>
+      </div>
+      <div class="joblist" id="joblist">
+        <h2>Jobs</h2>
+        <div id="jobs"></div>
+      </div>
+    </aside>
+
+    <section class="stage">
+      <div class="stage-head">
+        <span class="title" id="stage-title">Select a job or launch a new one</span>
+        <span class="pill" id="stage-status" style="display:none"></span>
+        <span class="jobid" id="stage-jobid"></span>
+      </div>
+      <div class="approval-banner" id="approval-banner">
+        <span class="txt" id="approval-text"></span>
+        <button class="btn approve" id="btn-approve">Approve</button>
+        <button class="btn reject" id="btn-reject">Reject</button>
+      </div>
+      <div class="dag-wrap">
+        <canvas id="dag"></canvas>
+        <div class="empty-stage" id="empty-stage">
+          <svg width="52" height="52" viewBox="0 0 32 32" fill="none" opacity="0.4">
+            <path d="M10 4c8 4 8 8 0 12s-8 8 0 12" stroke="#0d9488" stroke-width="2.4" stroke-linecap="round"/>
+            <path d="M22 4c-8 4-8 8 0 12s8 8 0 12" stroke="#7c3aed" stroke-width="2.4" stroke-linecap="round"/>
+          </svg>
+          <div class="big">No job selected</div>
+          <div class="small">Launch a job on the left - its live DAG renders here.</div>
+        </div>
+      </div>
+      <div class="bottom">
+        <div class="panel">
+          <h3><span class="live-dot off" id="live-dot"></span> Event stream</h3>
+          <div class="panel-body" id="events"></div>
+        </div>
+        <div class="panel">
+          <h3>Result</h3>
+          <div class="panel-body result-view" id="result"><span class="placeholder">The final synthesis lands here when the job completes.</span></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

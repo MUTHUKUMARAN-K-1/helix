@@ -1,0 +1,10 @@
+{
+  "goal": "Tear down a competitor product and extract actionable lessons",
+  "token_budget": 70000,
+  "nodes": [
+    {"id": "surface", "kind": "research", "task": "Catalog the competitor's features, pricing and positioning", "depends_on": [], "model_tier": "cheap"},
+    {"id": "gaps", "kind": "analysis", "task": "Identify weaknesses, unverified claims and underserved segments", "depends_on": ["surface"], "model_tier": "cheap"},
+    {"id": "counter", "kind": "analysis", "task": "Design counter-positioning: where we can be objectively better", "depends_on": ["surface"], "model_tier": "cheap"},
+    {"id": "brief", "kind": "synthesis", "task": "Write the teardown brief with an action list", "depends_on": ["gaps", "counter"], "model_tier": "strong"}
+  ]
+}

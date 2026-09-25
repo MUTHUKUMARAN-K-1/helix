@@ -1,0 +1,10 @@
+{
+  "goal": "Research a topic and produce a structured report",
+  "token_budget": 60000,
+  "nodes": [
+    {"id": "scope", "kind": "research", "task": "Define the key questions and scope for: {topic}", "depends_on": [], "model_tier": "cheap"},
+    {"id": "facts", "kind": "research", "task": "Gather the core facts, numbers and sources", "depends_on": ["scope"], "model_tier": "cheap"},
+    {"id": "angles", "kind": "analysis", "task": "Analyze implications, risks and counterpoints", "depends_on": ["scope"], "model_tier": "cheap"},
+    {"id": "report", "kind": "synthesis", "task": "Write the final structured report with sections: summary, findings, analysis, recommendation", "depends_on": ["facts", "angles"], "model_tier": "strong"}
+  ]
+}

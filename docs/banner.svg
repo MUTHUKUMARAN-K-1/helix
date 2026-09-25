@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#14b8a6"/>
+      <stop offset="0.55" stop-color="#0ea5e9"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.6">
+      <stop offset="0" stop-color="#0ea5e9" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#0ea5e9" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="300" fill="#f8fafc"/>
+  <rect width="1200" height="300" fill="url(#glow)"/>
+  <g transform="translate(420,150) scale(0.9)" fill="none" stroke-linecap="round">
+    <path d="M-60 -90 C 20 -50, 20 -10, -60 30 C -120 60, -120 80, -60 110" stroke="#14b8a6" stroke-width="10"/>
+    <path d="M60 -90 C -20 -50, -20 -10, 60 30 C 120 60, 120 80, 60 110" stroke="#8b5cf6" stroke-width="10"/>
+    <line x1="-40" y1="-55" x2="40" y2="-55" stroke="#0ea5e9" stroke-width="6" opacity="0.85"/>
+    <line x1="-48" y1="-5" x2="48" y2="-5" stroke="#0ea5e9" stroke-width="6" opacity="0.85"/>
+    <line x1="-40" y1="48" x2="40" y2="48" stroke="#0ea5e9" stroke-width="6" opacity="0.85"/>
+  </g>
+  <text x="530" y="140" font-family="Inter, Arial, sans-serif" font-size="64" font-weight="800" letter-spacing="14" fill="url(#g)">HELIX</text>
+  <text x="532" y="185" font-family="Inter, Arial, sans-serif" font-size="20" letter-spacing="3" fill="#64748b">lean DAG orchestration for long-running agent jobs</text>
+</svg>

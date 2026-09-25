@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "helix-orchestrator"
+version = "0.1.0"
+description = "Helix - lean DAG orchestration for long-running agent jobs: typed plans, parallel execution, verification, approval gates, cost control."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+keywords = ["ai", "agent", "orchestration", "dag", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "pydantic>=2.5",
+    "httpx>=0.27",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+helix = "helix.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["helix*"]
+
+[tool.setuptools.package-data]
+helix = ["dashboard/*"]

@@ -22,7 +22,8 @@ def _store(args) -> Store:
 def _run_job(args, store: Store, jid: str):
     """Run a job to completion, printing status; exits non-zero on failure."""
     runner = JobRunner(store, args.provider, token_budget=args.budget,
-                       memory_root=None if getattr(args, "no_memory", False) else args.memory)
+                       memory_root=None if getattr(args, "no_memory", False) else args.memory,
+                       workspace_dir=getattr(args, "worktree", None))
 
     async def auto_approve():
         if not getattr(args, "auto_approve", False):
@@ -322,6 +323,42 @@ def cmd_mcp(args):
     sys.exit(f"unknown mcp action {args.action}")
 
 
+def _job_workspace(store: Store, job_id: str):
+    from .workspaces import Workspace
+    job = store.get_job(job_id)
+    if not job:
+        sys.exit(f"no job {job_id}")
+    if not job.get("workspace_path"):
+        sys.exit(f"job {job_id} has no workspace (run with --worktree)")
+    return Workspace(job_id=job_id, path=Path(job["workspace_path"]),
+                     branch=job.get("workspace_branch") or "")
+
+
+def cmd_diff(args):
+    store = _store(args)
+    ws = _job_workspace(store, args.job_id)
+    if not ws.is_git:
+        sys.exit("workspace is not in a git repo; no diff available")
+    from .workspaces import WorkspaceManager
+    out = WorkspaceManager(".").diff(ws, stat_only=args.stat)
+    print(out if out.strip() else "(workspace clean - no changes)")
+
+
+def cmd_commit(args):
+    store = _store(args)
+    ws = _job_workspace(store, args.job_id)
+    from .workspaces import WorkspaceManager
+    try:
+        rev = WorkspaceManager(".").commit(
+            ws, args.message or f"helix job {args.job_id}")
+    except Exception as e:
+        sys.exit(str(e))
+    store.emit(args.job_id, "workspace_committed", None,
+               {"branch": ws.branch, "rev": rev})
+    print(f"committed {rev[:10]} on branch {ws.branch}")
+    print(f"merge it with: git merge {ws.branch}")
+
+
 def cmd_memory(args):
     """List recalled learnings, or append one with --add."""
     from .memory import MemoryStore
@@ -385,6 +422,8 @@ def main(argv=None):
     sp.add_argument("goal")
     sp.add_argument("--budget", type=int, default=60000)
     sp.add_argument("--auto-approve", action="store_true", help="auto-approve human gates")
+    sp.add_argument("--worktree", nargs="?", const=".", default=None,
+                    help="run the job in a git worktree of DIR (default: current dir)")
     common(sp)
     sp.set_defaults(fn=cmd_run)
 
@@ -428,6 +467,16 @@ def main(argv=None):
     sp.add_argument("--gold", default="examples/gold_plans.json")
     common(sp)
     sp.set_defaults(fn=cmd_eval)
+
+    sp = sub.add_parser("diff", help="show the diff a worktree job produced")
+    sp.add_argument("job_id")
+    sp.add_argument("--stat", action="store_true")
+    sp.set_defaults(fn=cmd_diff)
+
+    sp = sub.add_parser("commit", help="commit a worktree job's changes to its branch")
+    sp.add_argument("job_id")
+    sp.add_argument("-m", "--message", default=None)
+    sp.set_defaults(fn=cmd_commit)
 
     sp = sub.add_parser("mcp", help="manage MCP servers passed through to workers")
     sp.add_argument("action", choices=["add-server", "list", "remove"])

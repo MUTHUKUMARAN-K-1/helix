@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -201,3 +202,63 @@ def test_worker_preset_registry_and_mcp(tmp_path):
     env, args = _mcp_env_and_args(str(cfg))
     assert env["HELIX_MCP_CONFIG"] == str(cfg)
     assert "--mcp-config" in args
+
+
+def test_worktree_job_isolation(tmp_path):
+    """A worktree job edits its own branch; the base checkout stays clean."""
+    import subprocess
+    base = tmp_path / "proj"
+    base.mkdir()
+    def git(*a):
+        return subprocess.run(["git", *a], cwd=base, capture_output=True, text=True)
+    git("init", "-q", "-b", "main")
+    (base / "app.py").write_text("print('v1')\n")
+    git("add", "-A"); git("-c", "user.email=t@t", "-c", "user.name=t",
+                          "commit", "-qm", "init")
+    from helix.workspaces import WorkspaceManager
+    wm = WorkspaceManager(str(base))
+    ws = wm.create("job_test123")
+    assert ws.is_git and ws.branch == "helix/job_test123"
+    (ws.path / "app.py").write_text("print('v2')\n")
+    (ws.path / "new_file.py").write_text("# new\n")
+    diff = wm.diff(ws)
+    assert "v2" in diff and "new_file.py" in diff
+    assert (base / "app.py").read_text() == "print('v1')\n"  # base untouched
+    rev = wm.commit(ws, "job output")
+    assert rev
+    assert "nothing" not in wm.diff(ws) or wm.diff(ws).strip() == ""
+    wm.remove(ws)
+    assert not ws.path.exists()
+
+
+def test_workspace_non_git_fallback(tmp_path):
+    from helix.workspaces import WorkspaceManager
+    wm = WorkspaceManager(str(tmp_path))
+    ws = wm.create("job_plain")
+    assert not ws.is_git and ws.path.is_dir()
+    wm.remove(ws)
+
+
+def test_exec_nodes_run_inside_worktree(tmp_path):
+    """Regression: exec nodes must run in the job worktree, not the caller cwd."""
+    import asyncio, subprocess
+    base = tmp_path / "proj"
+    base.mkdir()
+    def git(*a):
+        return subprocess.run(["git", *a], cwd=base, capture_output=True, text=True)
+    git("init", "-q", "-b", "main")
+    (base / "app.py").write_text("v1\n")
+    git("add", "-A"); git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init")
+    plan = {"goal": "write a file", "nodes": [
+        {"id": "write_file", "kind": "exec", "task": "write out.txt",
+         "command": "python3 -c \"open('out.txt','w').write('made by helix')\"",
+         "depends_on": []}]}
+    store = Store(str(tmp_path / "t.db"))
+    jid = store.create_job("write a file", "mock")
+    store.update_job(jid, plan_json=json.dumps(plan))
+    runner = JobRunner(store, "mock", workspace_dir=str(base))
+    out = asyncio.run(runner.run(jid))
+    assert out["status"] == "completed"
+    assert not (base / "out.txt").exists(), "exec leaked into the base checkout"
+    ws_path = Path(store.get_job(jid)["workspace_path"])
+    assert (ws_path / "out.txt").read_text() == "made by helix"

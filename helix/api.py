@@ -37,6 +37,7 @@ class JobIn(BaseModel):
     goal: str
     provider: Optional[str] = None
     budget: int = 60000
+    workspace: bool = False
     plan: Optional[dict] = None
 
 
@@ -71,7 +72,8 @@ def create_app(db_path: Optional[str] = None, provider: str = "mock") -> FastAPI
             store.update_job(jid, plan_json=json.dumps(plan.model_dump()))
         mem_root = str(Path(db_path).parent / "memory") if db_path else None
         runner = JobRunner(store, prov, token_budget=body.budget,
-                           memory_root=mem_root)
+                           memory_root=mem_root,
+                           workspace_dir="." if body.workspace else None)
         asyncio.create_task(runner.run(jid))
         return {"id": jid, "status": "queued"}
 
@@ -171,6 +173,38 @@ def create_app(db_path: Optional[str] = None, provider: str = "mock") -> FastAPI
                 await asyncio.sleep(0.5)
 
         return StreamingResponse(gen(), media_type="text/event-stream")
+
+    @app.get("/api/jobs/{jid}/diff")
+    async def job_diff(jid: str, stat: bool = False):
+        job = get_job_or_404(jid)
+        if not job.get("workspace_path"):
+            raise HTTPException(404, "job has no workspace (submit with workspace=true)")
+        from .workspaces import Workspace, WorkspaceManager
+        ws = Workspace(job_id=jid, path=Path(job["workspace_path"]),
+                       branch=job.get("workspace_branch") or "")
+        if not ws.is_git:
+            return {"diff": "", "git": False}
+        return {"diff": WorkspaceManager(".").diff(ws, stat_only=stat),
+                "branch": ws.branch, "git": True}
+
+    class CommitIn(BaseModel):
+        message: str = ""
+
+    @app.post("/api/jobs/{jid}/commit")
+    async def job_commit(jid: str, body: CommitIn):
+        job = get_job_or_404(jid)
+        if not job.get("workspace_path"):
+            raise HTTPException(404, "job has no workspace")
+        from .workspaces import Workspace, WorkspaceManager
+        ws = Workspace(job_id=jid, path=Path(job["workspace_path"]),
+                       branch=job.get("workspace_branch") or "")
+        try:
+            rev = WorkspaceManager(".").commit(ws, body.message or f"helix job {jid}")
+        except Exception as e:
+            raise HTTPException(400, str(e))
+        store.emit(jid, "workspace_committed", None,
+                   {"branch": ws.branch, "rev": rev})
+        return {"branch": ws.branch, "rev": rev}
 
     @app.post("/api/jobs/{jid}/approve")
     async def approve(jid: str, body: ApprovalIn):

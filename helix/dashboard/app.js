@@ -87,6 +87,7 @@
     $("events").scrollTop = $("events").scrollHeight;
     if (!["completed", "failed", "budget_exceeded"].includes(job.status)) openStream(jid);
     refreshApprovals(events);
+    refreshChanges();
   }
 
   function openStream(jid) {
@@ -114,7 +115,7 @@
   }
 
   function finalRefresh() {
-    refreshJobs(); refreshStats();
+    refreshJobs(); refreshStats(); refreshChanges();
     if (state.jobId) api(`/api/jobs/${state.jobId}`).then(j => { if (j.result) showResult(j.result); setStatusPill(j.status); });
   }
 
@@ -185,6 +186,53 @@
   }
 
   function showResult(text) { const r = $("result"); r.textContent = text; r.classList.add("result-view"); }
+
+  function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
+  function renderDiff(text) {
+    if (!text || !text.trim()) return '<span class="placeholder">Workspace clean - no changes.</span>';
+    return text.split("\n").map(l => {
+      let cls = "";
+      if (l.startsWith("+++") || l.startsWith("---") || l.startsWith("diff --git")) cls = "dl-file";
+      else if (l.startsWith("@@")) cls = "dl-hunk";
+      else if (l.startsWith("+")) cls = "dl-add";
+      else if (l.startsWith("-")) cls = "dl-del";
+      return cls ? `<span class="${cls}">${esc(l)}</span>` : esc(l) + "\n";
+    }).join("");
+  }
+
+  async function refreshChanges() {
+    if (!state.jobId) return;
+    try {
+      const d = await api(`/api/jobs/${state.jobId}/diff`);
+      state.hasWorkspace = true;
+      $("changes").innerHTML = renderDiff(d.diff);
+      $("btn-commit").style.display = (d.diff && d.diff.trim()) ? "" : "none";
+    } catch (e) {
+      state.hasWorkspace = false;
+      $("changes").innerHTML = '<span class="placeholder">This job has no worktree. Launch with "Isolate in a git worktree".</span>';
+      $("btn-commit").style.display = "none";
+    }
+  }
+
+  $("tab-result").onclick = () => {
+    $("tab-result").classList.add("active"); $("tab-changes").classList.remove("active");
+    $("result").style.display = ""; $("changes").style.display = "none";
+  };
+  $("tab-changes").onclick = () => {
+    $("tab-changes").classList.add("active"); $("tab-result").classList.remove("active");
+    $("changes").style.display = ""; $("result").style.display = "none";
+    refreshChanges();
+  };
+  $("btn-commit").onclick = async () => {
+    $("btn-commit").disabled = true;
+    try {
+      const r = await api(`/api/jobs/${state.jobId}/commit`, { body: {} });
+      $("changes").innerHTML = `<span class="placeholder">Committed ${r.rev.slice(0,10)} on ${r.branch}. Merge with: git merge ${r.branch}</span>`;
+      $("btn-commit").style.display = "none";
+    } catch (e) { alert("commit failed: " + e.message); }
+    finally { $("btn-commit").disabled = false; }
+  };
 
   const canvas = $("dag");
   const ctx = canvas.getContext("2d");
@@ -302,7 +350,7 @@
     if (!goal) return;
     $("launch").disabled = true;
     try {
-      const { id } = await api("/api/jobs", { body: { goal, provider: $("provider").value, budget: +$("budget").value || 60000 } });
+      const { id } = await api("/api/jobs", { body: { goal, provider: $("provider").value, budget: +$("budget").value || 60000, workspace: $("worktree").checked } });
       $("goal").value = "";
       await refreshJobs();
       selectJob(id);

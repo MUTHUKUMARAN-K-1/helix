@@ -46,6 +46,11 @@ class Store:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(SCHEMA)
+            for col in ("workspace_path TEXT", "workspace_branch TEXT"):
+                try:
+                    self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col}")
+                except sqlite3.OperationalError:
+                    pass  # column already exists
             self._conn.commit()
 
     def close(self):

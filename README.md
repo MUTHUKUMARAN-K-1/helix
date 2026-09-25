@@ -126,6 +126,19 @@ A node with `kind: "exec"` runs a shell command instead of a model call - builds
 { "id": "tests", "kind": "exec", "command": "pytest -q", "depends_on": ["builder"] }
 ```
 
+## Worktree workspaces: every coding job on its own branch
+
+Run a coding job inside its own git worktree and nothing touches your checkout until you say so:
+
+```bash
+helix run "add rate limiting to the api" --worktree --provider gemini
+helix diff <job_id>          # review exactly what it changed
+helix commit <job_id>        # commit to the helix/<job_id> branch
+git merge helix/<job_id>     # your call, your merge
+```
+
+Exec and agent nodes run with the worktree as their working directory; the dashboard's Changes tab renders the diff with a Commit button. Non-git projects get a private workspace directory instead. Add `.helix/` to your global gitignore or let Helix mark it excluded automatically.
+
 ## Memory, playbooks, schedules
 
 Helix remembers what it learns. Every completed node writes a short learning to a markdown memory store (`memory/LEARNINGS.md` next to the database), and both the planner and each node prompt recall the entries relevant to the current goal - so the tenth run of a workflow is smarter than the first. Inspect it with `helix memory`, query it with `helix memory --recall "<topic>"`, add your own with `helix memory --add "..."`, or turn it off per run with `--no-memory`.

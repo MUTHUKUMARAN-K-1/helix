@@ -62,6 +62,9 @@
           </select>
           <input type="number" id="budget" value="60000" min="1000" step="1000" title="token budget">
         </div>
+        <label class="wt-row" title="Run this job in its own git worktree of the current repo - changes land on a helix/<job> branch you can review and merge.">
+          <input type="checkbox" id="worktree"> <span>Isolate in a git worktree</span>
+        </label>
         <button class="btn-launch" id="launch">Launch job</button>
       </div>
       <div class="joblist" id="joblist">
@@ -98,8 +101,13 @@
           <div class="panel-body" id="events"></div>
         </div>
         <div class="panel">
-          <h3>Result</h3>
+          <h3 class="tabs">
+            <button class="tab active" id="tab-result">Result</button>
+            <button class="tab" id="tab-changes">Changes</button>
+            <button class="btn-commit" id="btn-commit" style="display:none">Commit to branch</button>
+          </h3>
           <div class="panel-body result-view" id="result"><span class="placeholder">The final synthesis lands here when the job completes.</span></div>
+          <div class="panel-body diff-view" id="changes" style="display:none"><span class="placeholder">Run a job with "Isolate in a git worktree" - its diff shows up here.</span></div>
         </div>
       </div>
     </section>

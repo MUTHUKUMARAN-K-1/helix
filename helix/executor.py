@@ -56,7 +56,7 @@ class _WorkerChatResult:
 class JobRunner:
     def __init__(self, store: Store, provider: Optional[str] = None,
                  token_budget: Optional[int] = None, approval_poll_s: float = 2.0,
-                 memory_root: Optional[str] = None):
+                 memory_root: Optional[str] = None, workspace_dir: Optional[str] = None):
         self.store = store
         self.router = ModelRouter(provider or "mock",
                                   token_budget=token_budget or 60000)
@@ -65,6 +65,7 @@ class JobRunner:
         if memory_root:
             from .memory import MemoryStore
             self.memory = MemoryStore(Path(memory_root))
+        self.workspace_dir = workspace_dir
 
     async def run(self, job_id: str) -> dict:
         job = self.store.get_job(job_id)
@@ -85,6 +86,15 @@ class JobRunner:
                                   plan_json=json.dumps(plan.model_dump()))
             self.store.emit(job_id, "plan_ready", None,
                             {"plan": plan.model_dump(), "metrics": plan_metrics(plan)})
+            if self.workspace_dir:
+                from .workspaces import WorkspaceManager
+                ws = WorkspaceManager(self.workspace_dir).create(job_id)
+                self._workspace = ws
+                self.store.update_job(job_id, workspace_path=str(ws.path),
+                                      workspace_branch=ws.branch)
+                self.store.emit(job_id, "workspace_ready", None,
+                                {"path": str(ws.path), "branch": ws.branch,
+                                 "git": ws.is_git})
             result = await self._execute(job_id, plan)
             self.store.update_job(job_id, status="completed", result=result,
                                   tokens_used=self.router.spent, cost_usd=self.router.cost_usd())
@@ -139,15 +149,17 @@ class JobRunner:
         last_err: Optional[Exception] = None
         for attempt in range(1, MAX_NODE_ATTEMPTS + 1):
             try:
+                ws_cwd = (str(self._workspace.path)
+                          if getattr(self, "_workspace", None) else None)
                 if node.kind == "agent":
                     from .workers import run_worker
                     mcp = str(Path(self.store._path).parent / "mcp.json")
-                    wr = await run_worker(node.worker, prompt,
+                    wr = await run_worker(node.worker, prompt, cwd=ws_cwd,
                                           mcp_config=mcp if Path(mcp).is_file() else None)
                     res = _WorkerChatResult(wr)
                 elif node.kind == "exec":
                     from .sandbox import run_exec
-                    wr = await run_exec(node.command or node.task)
+                    wr = await run_exec(node.command or node.task, cwd=ws_cwd)
                     res = _WorkerChatResult(wr)
                 else:
                     res = await self.router.chat(

@@ -110,3 +110,19 @@ section.stage { display: flex; flex-direction: column; min-height: 0; position: 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: rgba(100,116,139,0.25); border-radius: 99px; border: 2px solid var(--bg); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* worktree row + tabs + diff view */
+.wt-row { display: flex; align-items: center; gap: 7px; margin: 8px 0 0; font-size: 11.5px; color: var(--text-dim); cursor: pointer; }
+.wt-row input { accent-color: var(--accent, #0d9488); }
+.tabs { gap: 4px !important; }
+.tab { background: none; border: none; color: var(--text-dim); font: inherit; text-transform: inherit; letter-spacing: inherit; padding: 2px 8px; border-radius: 5px; cursor: pointer; }
+.tab.active { color: var(--text); background: var(--bg); }
+.btn-commit { margin-left: auto; font-size: 10px; padding: 3px 10px; border-radius: 5px; border: 1px solid var(--accent, #0d9488); background: none; color: var(--accent, #0d9488); cursor: pointer; text-transform: none; letter-spacing: normal; }
+.btn-commit:hover { background: var(--accent, #0d9488); color: #fff; }
+.diff-view { font-family: var(--mono); font-size: 11px; line-height: 1.55; white-space: pre-wrap; word-break: break-all; }
+.diff-view .dl-add { color: #059669; background: rgba(5,150,105,.08); display: block; }
+.diff-view .dl-del { color: #dc2626; background: rgba(220,38,38,.08); display: block; }
+.diff-view .dl-hunk { color: #7c3aed; display: block; }
+.diff-view .dl-file { color: var(--text); font-weight: 600; display: block; margin-top: 6px; }
+[data-theme="dark"] .dl-add { color: #34d399; background: rgba(52,211,153,.1); }
+[data-theme="dark"] .dl-del { color: #f87171; background: rgba(248,113,113,.1); }

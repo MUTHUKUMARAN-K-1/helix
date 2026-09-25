@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -167,6 +168,7 @@ def test_cron_matching_and_due(tmp_path):
     assert ss.remove("morning") and ss.list() == []
 
 
+@pytest.mark.skipif(os.name == "nt", reason="sh hooks are a POSIX pattern; Windows uses .cmd/.ps1")
 def test_hooks_fire_on_events(tmp_path):
     hook = tmp_path / "hooks" / "job_created"
     hook.parent.mkdir()

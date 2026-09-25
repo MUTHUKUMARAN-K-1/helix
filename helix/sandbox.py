@@ -12,7 +12,11 @@ import os
 import shlex
 from dataclasses import dataclass
 
-DEFAULT_ALLOW = "python3,python,pip,node,npm,npx,pytest,cat,ls,echo,grep,find,jq,curl,git status,git diff,git log"
+# Unix default; Windows gets a cmd/PowerShell-flavored list (python -c stays
+# the portable way to write files - redirects are blocked on every OS).
+_DEFAULT_ALLOW_POSIX = "python3,python,pip,node,npm,npx,pytest,cat,ls,echo,grep,find,jq,curl,git status,git diff,git log"
+_DEFAULT_ALLOW_NT = "python,python3,py,pip,node,npm,npx,pytest,echo,dir,type,findstr,curl,git status,git diff,git log"
+DEFAULT_ALLOW = _DEFAULT_ALLOW_NT if os.name == "nt" else _DEFAULT_ALLOW_POSIX
 
 
 @dataclass

@@ -215,15 +215,21 @@
     }
   }
 
-  $("tab-result").onclick = () => {
-    $("tab-result").classList.add("active"); $("tab-changes").classList.remove("active");
-    $("result").style.display = ""; $("changes").style.display = "none";
-  };
-  $("tab-changes").onclick = () => {
-    $("tab-changes").classList.add("active"); $("tab-result").classList.remove("active");
-    $("changes").style.display = ""; $("result").style.display = "none";
-    refreshChanges();
-  };
+  function showTab(name) {
+    for (const t of ["result", "changes", "terminal"]) {
+      $("tab-" + t).classList.toggle("active", t === name);
+      $(t).style.display = t === name ? "" : "none";
+    }
+    const isTerm = name === "terminal";
+    $("term-cwd").style.display = isTerm ? "" : "none";
+    $("btn-term-restart").style.display = isTerm ? "" : "none";
+    $("btn-commit").style.display = "none";
+    if (name === "changes") refreshChanges();
+    if (isTerm) openTerminal();
+  }
+  $("tab-result").onclick = () => showTab("result");
+  $("tab-changes").onclick = () => showTab("changes");
+  $("tab-terminal").onclick = () => showTab("terminal");
   $("btn-commit").onclick = async () => {
     $("btn-commit").disabled = true;
     try {
@@ -364,7 +370,78 @@
     const next = theme() === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = next;
     localStorage.setItem("helix-theme", next);
+    if (termCtl.term) termCtl.term.options.theme = TERM_THEMES[next];
     draw();
+  };
+
+  /* ---- Embedded terminal: per-job shell over websocket ---- */
+  const termCtl = { term: null, fit: null, ws: null, sessions: {}, current: null };
+  const TERM_THEMES = {
+    light: { background: "#0b0f16", foreground: "#d6deeb", cursor: "#5eead4", selectionBackground: "#1d3b53" },
+    dark:  { background: "#0b0f16", foreground: "#d6deeb", cursor: "#5eead4", selectionBackground: "#1d3b53" },
+  };
+
+  function ensureXterm() {
+    if (termCtl.term) return;
+    termCtl.term = new Terminal({
+      fontFamily: "ui-monospace, 'JetBrains Mono', Consolas, monospace",
+      fontSize: 12, cursorBlink: true, scrollback: 5000,
+      theme: TERM_THEMES[theme()],
+    });
+    termCtl.fit = new FitAddon.FitAddon();
+    termCtl.term.loadAddon(termCtl.fit);
+    termCtl.term.open($("term-host"));
+    termCtl.term.onData(d => { if (termCtl.ws && termCtl.ws.readyState === 1) termCtl.ws.send(JSON.stringify({ type: "input", data: d })); });
+    new ResizeObserver(() => {
+      if ($("terminal").style.display === "none") return;
+      termCtl.fit.fit();
+      if (termCtl.ws && termCtl.ws.readyState === 1)
+        termCtl.ws.send(JSON.stringify({ type: "resize", cols: termCtl.term.cols, rows: termCtl.term.rows }));
+    }).observe($("term-host"));
+  }
+
+  async function openTerminal() {
+    if (!state.jobId) return;
+    ensureXterm();
+    const known = termCtl.sessions[state.jobId];
+    if (known) { attachTerminal(known); return; }
+    try {
+      const s = await api(`/api/jobs/${state.jobId}/terminal`, { body: {} });
+      termCtl.sessions[state.jobId] = s;
+      attachTerminal(s);
+    } catch (e) {
+      termCtl.term.write("\r\n[terminal unavailable: " + e.message + "]\r\n");
+    }
+  }
+
+  function attachTerminal(s) {
+    if (termCtl.current === s.id && termCtl.ws && termCtl.ws.readyState <= 1) { termCtl.fit.fit(); return; }
+    if (termCtl.ws) termCtl.ws.close();
+    termCtl.current = s.id;
+    $("term-cwd").textContent = s.cwd;
+    termCtl.term.reset();
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(`${proto}://${location.host}/api/terminal/${s.id}/ws`);
+    termCtl.ws = ws;
+    ws.onopen = () => {
+      termCtl.fit.fit();
+      ws.send(JSON.stringify({ type: "resize", cols: termCtl.term.cols, rows: termCtl.term.rows }));
+    };
+    ws.onmessage = (m) => {
+      const f = JSON.parse(m.data);
+      if (f.type === "output") termCtl.term.write(f.data);
+      else if (f.type === "exit") { termCtl.term.write("\r\n[shell exited - use New shell to restart]\r\n"); delete termCtl.sessions[state.jobId]; }
+    };
+    ws.onclose = (e) => {
+      if (e.code === 4404) { delete termCtl.sessions[state.jobId]; termCtl.term.write("\r\n[session expired - click Terminal again for a fresh shell]\r\n"); }
+    };
+  }
+
+  $("btn-term-restart").onclick = async () => {
+    const s = termCtl.sessions[state.jobId];
+    if (s) { try { await fetch(`/api/terminal/${s.id}`, { method: "DELETE" }); } catch (e) {} delete termCtl.sessions[state.jobId]; }
+    termCtl.current = null;
+    openTerminal();
   };
 
   /* ---- Jobs board: every run at a glance ---- */

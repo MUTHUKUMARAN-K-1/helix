@@ -8,6 +8,10 @@ Endpoints:
   GET  /api/jobs/{id}/stream     SSE stream of events
   POST /api/jobs/{id}/approve    {node_id, approved, note?}
   GET  /api/stats                fleet-level totals
+  POST /api/jobs/{id}/terminal   open a shell in the job's worktree -> {id, cwd, shell}
+  GET  /api/terminals            live terminal sessions
+  DELETE /api/terminal/{sid}     kill a session
+  WS   /api/terminal/{sid}/ws    attach to a session (input/resize/output frames)
   GET  /.well-known/agent.json   A2A-style agent card
   POST /a2a                      A2A-style task submit (alias of /api/jobs)
   GET  /                         dashboard
@@ -19,7 +23,7 @@ import json
 import os
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -45,6 +49,11 @@ class ApprovalIn(BaseModel):
     node_id: str
     approved: bool
     note: str = ""
+
+
+class TerminalIn(BaseModel):
+    cols: int = 100
+    rows: int = 28
 
 
 def create_app(db_path: Optional[str] = None, provider: str = "mock") -> FastAPI:
@@ -223,6 +232,80 @@ def create_app(db_path: Optional[str] = None, provider: str = "mock") -> FastAPI
             "cost_total_usd": round(sum(j["cost_usd"] or 0 for j in jobs), 6),
             "providers": sorted(PROVIDERS),
         }
+
+    # ---- embedded terminals ----
+    from .terminal import TerminalManager
+    app.state.terminals = TerminalManager(base_cwd=os.getcwd())
+
+    def ensure_reaper():
+        task = getattr(app.state, "_reaper_task", None)
+        if task is None or task.done():
+            async def reap_loop():
+                while True:
+                    await asyncio.sleep(60)
+                    app.state.terminals.reap_idle()
+            app.state._reaper_task = asyncio.create_task(reap_loop())
+
+    @app.post("/api/jobs/{jid}/terminal", status_code=201)
+    async def open_terminal(jid: str, body: TerminalIn):
+        job = get_job_or_404(jid)
+        ensure_reaper()
+        sess = app.state.terminals.create(cwd=job.get("workspace_path"),
+                                          cols=body.cols, rows=body.rows)
+        return {"id": sess.id, "cwd": sess.cwd, "shell": sess.shell}
+
+    @app.get("/api/terminals")
+    async def list_terminals():
+        mgr = app.state.terminals
+        return {"terminals": [
+            {"id": s.id, "cwd": s.cwd, "shell": s.shell, "alive": s.alive,
+             "clients": s.listener_count, "created_at": s.created_at}
+            for s in mgr.sessions()]}
+
+    @app.delete("/api/terminal/{sid}")
+    async def kill_terminal(sid: str):
+        if not app.state.terminals.kill(sid):
+            raise HTTPException(404, f"no terminal {sid}")
+        return {"ok": True}
+
+    @app.websocket("/api/terminal/{sid}/ws")
+    async def terminal_ws(ws: WebSocket, sid: str):
+        sess = app.state.terminals.get(sid)
+        if sess is None:
+            await ws.close(code=4404)
+            return
+        await ws.accept()
+        queue, snapshot = sess.attach()
+        if snapshot:
+            await ws.send_json({"type": "output", "data": snapshot.decode("utf-8", "replace")})
+
+        async def pump_out():
+            try:
+                while True:
+                    data = await queue.get()
+                    if data is None:
+                        await ws.send_json({"type": "exit", "code": sess.exit_code})
+                        return
+                    await ws.send_json({"type": "output", "data": data.decode("utf-8", "replace")})
+            except Exception:
+                pass
+
+        sender = asyncio.create_task(pump_out())
+        try:
+            while True:
+                frame = await ws.receive_json()
+                t = frame.get("type")
+                if t == "input":
+                    sess.write(str(frame.get("data", "")).encode("utf-8", "replace"))
+                elif t == "resize":
+                    sess.resize(int(frame.get("cols", 80)), int(frame.get("rows", 24)))
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            pass
+        finally:
+            sender.cancel()
+            sess.detach(queue)
 
     @app.get("/")
     async def index():

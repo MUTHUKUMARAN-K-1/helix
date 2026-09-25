@@ -286,3 +286,57 @@ def test_list_jobs_board_fields(tmp_path):
     j2 = store.create_job("plain", "mock")
     row2 = [j for j in store.list_jobs(5) if j["id"] == j2][0]
     assert row2["nodes_total"] == 0 and row2["nodes_done"] == 0
+
+
+def test_terminal_session_roundtrip(tmp_path):
+    """A PTY session runs a shell, echoes input, replays scrollback, resizes, dies."""
+    import time
+    from helix.terminal import TerminalManager
+    mgr = TerminalManager(str(tmp_path))
+    sess = mgr.create()
+    try:
+        time.sleep(0.5)
+        sess.write(b"echo helix-$((6*7))\n")
+        deadline = time.time() + 5
+        q, snap = None, b""
+        while time.time() < deadline:
+            q, snap = sess.attach()
+            sess.detach(q)
+            if b"helix-42" in snap:
+                break
+            time.sleep(0.2)
+        assert b"helix-42" in snap
+        sess.resize(132, 43)
+        assert (sess.cols, sess.rows) == (132, 43)
+        assert mgr.get(sess.id) is sess
+    finally:
+        assert mgr.kill(sess.id) is True
+    assert mgr.get(sess.id) is None
+
+
+def test_terminal_websocket(tmp_path):
+    """The WS bridge attaches to a session and round-trips shell output."""
+    import time
+    from fastapi.testclient import TestClient
+    from helix.api import create_app
+    app = create_app(db_path=str(tmp_path / "t.db"), provider="mock")
+    client = TestClient(app)
+    jid = client.post("/api/jobs", json={"goal": "term test", "plan": {
+        "goal": "term test",
+        "nodes": [{"id": "n1", "kind": "research", "task": "noop", "depends_on": []}],
+    }}).json()["id"]
+    time.sleep(1.5)
+    sess = client.post(f"/api/jobs/{jid}/terminal", json={}).json()
+    assert sess["id"].startswith("term_") and sess["shell"]
+    with client.websocket_connect(f"/api/terminal/{sess['id']}/ws") as ws:
+        ws.send_json({"type": "input", "data": "echo ws-$((3*4))\n"})
+        out = ""
+        deadline = time.time() + 5
+        while time.time() < deadline and "ws-12" not in out:
+            frame = ws.receive_json()
+            if frame["type"] == "output":
+                out += frame["data"]
+        assert "ws-12" in out
+    listing = client.get("/api/terminals").json()["terminals"]
+    assert any(t["id"] == sess["id"] for t in listing)
+    assert client.delete(f"/api/terminal/{sess['id']}").json() == {"ok": True}

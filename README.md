@@ -149,6 +149,14 @@ Running several jobs at once? The dashboard's Board view (`?board=1` or the Boar
 
 <p align="center">
   <img src="docs/screenshot-board.png" alt="Helix jobs board - every run at a glance" width="85%">
+</p>
+
+### Embedded terminals
+
+Every job has a Terminal tab: a real shell (PTY on Linux/macOS, pywinpty on Windows) opened in the job's worktree - or the server directory for jobs without one - right in the dashboard. Inspect what the agent did, run follow-up commands, or debug a failed node without leaving the browser. Sessions survive tab switches and reconnects, and idle shells are reaped automatically.
+
+<p align="center">
+  <img src="docs/screenshot-terminal.png" alt="Helix embedded terminal - a live shell in the job's worktree" width="85%">
 </p> Non-git projects get a private workspace directory instead. Add `.helix/` to your global gitignore or let Helix mark it excluded automatically.
 
 ## Memory, playbooks, schedules

@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Helix - Agent Orchestration</title>
+<link rel="stylesheet" href="/vendor/xterm.css">
 <link rel="stylesheet" href="/styles.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M10 4c8 4 8 8 0 12s-8 8 0 12' stroke='%230d9488' stroke-width='3' fill='none' stroke-linecap='round'/><path d='M22 4c-8 4-8 8 0 12s8 8 0 12' stroke='%237c3aed' stroke-width='3' fill='none' stroke-linecap='round'/></svg>">
 </head>
@@ -105,10 +106,14 @@
           <h3 class="tabs">
             <button class="tab active" id="tab-result">Result</button>
             <button class="tab" id="tab-changes">Changes</button>
+            <button class="tab" id="tab-terminal">Terminal</button>
+            <span class="term-cwd" id="term-cwd" style="display:none"></span>
+            <button class="btn-term-restart" id="btn-term-restart" style="display:none" title="Kill this shell and start a fresh one">New shell</button>
             <button class="btn-commit" id="btn-commit" style="display:none">Commit to branch</button>
           </h3>
           <div class="panel-body result-view" id="result"><span class="placeholder">The final synthesis lands here when the job completes.</span></div>
           <div class="panel-body diff-view" id="changes" style="display:none"><span class="placeholder">Run a job with "Isolate in a git worktree" - its diff shows up here.</span></div>
+          <div class="panel-body term-view" id="terminal" style="display:none"><div id="term-host"></div></div>
         </div>
       </div>
     </section>
@@ -134,6 +139,8 @@
     </div>
   </div>
 </div>
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/addon-fit.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

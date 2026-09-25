@@ -192,3 +192,17 @@ section.stage { display: flex; flex-direction: column; min-height: 0; position: 
   margin: 0; padding: 16px 18px; overflow: auto; font: 11px/1.55 ui-monospace, monospace;
   color: var(--text-dim); white-space: pre-wrap; word-break: break-all;
 }
+
+/* ---- embedded terminal ---- */
+.term-view { padding: 8px; background: #0b0f16; border-radius: 0 0 12px 12px; }
+#term-host { height: 100%; min-height: 220px; }
+#term-host .xterm { height: 100%; padding: 4px; }
+.term-cwd {
+  font: 500 10px var(--mono); color: var(--text-faint); margin-left: auto;
+  max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.btn-term-restart {
+  font: 600 10.5px var(--sans); border-radius: 8px; padding: 3px 10px; cursor: pointer;
+  border: 1px solid var(--border); background: transparent; color: var(--text-dim);
+}
+.btn-term-restart:hover { border-color: var(--warn); color: var(--warn); }
